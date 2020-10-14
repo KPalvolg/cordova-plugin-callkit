@@ -36,7 +36,7 @@ exports.setVideo = function(value, success, error) {
     }
 };
 
-exports.receiveCall = function(from, id, success, error) {
+exports.receiveCall = function(from, id, isVideo, success, error) {
     if(typeof id == "function") {
       error = success;
       success = id;
@@ -44,10 +44,10 @@ exports.receiveCall = function(from, id, success, error) {
     } else if(id) {
       id = id.toString();
     }
-    exec(success, error, "CordovaCall", "receiveCall", [from, id]);
+    exec(success, error, "CordovaCall", "receiveCall", [from, id, isVideo]);
 };
 
-exports.sendCall = function(to, id, success, error) {
+exports.sendCall = function(to, id, isVideo, success, error) {
     if(typeof id == "function") {
       error = success;
       success = id;
@@ -55,7 +55,7 @@ exports.sendCall = function(to, id, success, error) {
     } else if(id) {
       id = id.toString();
     }
-    exec(success, error, "CordovaCall", "sendCall", [to, id]);
+    exec(success, error, "CordovaCall", "sendCall", [to, id, isVideo]);
 };
 
 exports.connectCall = function(success, error) {

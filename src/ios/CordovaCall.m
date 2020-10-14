@@ -6,7 +6,7 @@
 
 @synthesize VoIPPushCallbackId, VoIPPushClassName, VoIPPushMethodName;
 
-BOOL hasVideo = NO;
+BOOL defHasVideo = NO;
 NSString* appName;
 NSString* ringtone;
 NSString* icon;
@@ -53,6 +53,31 @@ BOOL enableDTMF = NO;
 
 // CallKit - Interface
 - (void)updateProviderConfig
+{
+    CXProviderConfiguration *providerConfiguration;
+    providerConfiguration = [[CXProviderConfiguration alloc] initWithLocalizedName:appName];
+    providerConfiguration.maximumCallGroups = 1;
+    providerConfiguration.maximumCallsPerCallGroup = 1;
+    if(ringtone != nil) {
+        providerConfiguration.ringtoneSound = ringtone;
+    }
+    if(icon != nil) {
+        UIImage *iconImage = [UIImage imageNamed:icon];
+        NSData *iconData = UIImagePNGRepresentation(iconImage);
+        providerConfiguration.iconTemplateImageData = iconData;
+    }
+    NSMutableSet *handleTypes = [[NSMutableSet alloc] init];
+    [handleTypes addObject:@(CXHandleTypePhoneNumber)];
+    providerConfiguration.supportedHandleTypes = handleTypes;
+    providerConfiguration.supportsVideo = defHasVideo;
+    if (@available(iOS 11.0, *)) {
+        providerConfiguration.includesCallsInRecents = includeInRecents;
+    }
+
+    self.provider.configuration = providerConfiguration;
+}
+
+- (void)updateProviderConfig:(BOOL)hasVideo
 {
     CXProviderConfiguration *providerConfiguration;
     providerConfiguration = [[CXProviderConfiguration alloc] initWithLocalizedName:appName];
@@ -164,36 +189,42 @@ BOOL enableDTMF = NO;
 - (void)setVideo:(CDVInvokedUrlCommand*)command
 {
     CDVPluginResult* pluginResult = nil;
-    hasVideo = [[command.arguments objectAtIndex:0] boolValue];
+    defHasVideo = [[command.arguments objectAtIndex:0] boolValue];
     [self updateProviderConfig];
-    pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:@"hasVideo Changed Successfully"];
+    pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:@"defHasVideo Changed Successfully"];
     [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
 }
 
 - (void)receiveCall:(CDVInvokedUrlCommand*)command
 {
     BOOL hasId = ![[command.arguments objectAtIndex:1] isEqual:[NSNull null]];
+    BOOL hasVideo = ![[command.arguments objectAtIndex:2] isEqual:[NSNull null]];
     CDVPluginResult* pluginResult = nil;
     NSString* callName = [command.arguments objectAtIndex:0];
     NSString* callId = hasId?[command.arguments objectAtIndex:1]:callName;
+    BOOL isVideo = hasVideo?(BOOL)[command.arguments objectAtIndex:2]:defHasVideo;
     NSUUID *callUUID = [[NSUUID alloc] init];
 
     if (hasId) {
         [[NSUserDefaults standardUserDefaults] setObject:callName forKey:[command.arguments objectAtIndex:1]];
         [[NSUserDefaults standardUserDefaults] synchronize];
     }
+    if(hasVideo) {
+        [self updateProviderConfig:hasVideo];
+    }
 
     if (callName != nil && [callName length] > 0) {
         CXHandle *handle = [[CXHandle alloc] initWithType:CXHandleTypePhoneNumber value:callId];
         CXCallUpdate *callUpdate = [[CXCallUpdate alloc] init];
         callUpdate.remoteHandle = handle;
-        callUpdate.hasVideo = hasVideo;
+        callUpdate.hasVideo = isVideo;
         callUpdate.localizedCallerName = callName;
         callUpdate.supportsGrouping = NO;
         callUpdate.supportsUngrouping = NO;
         callUpdate.supportsHolding = NO;
         callUpdate.supportsDTMF = enableDTMF;
 
+        [self.webViewEngine evaluateJavaScript:[NSString stringWithFormat:@"window._CordovaCall_callData = {uuid:'%@', name:'%@', isVideo:%@}", [callUUID UUIDString], callName, isVideo ? @"true" : @"false"] completionHandler:nil];
         [self.provider reportNewIncomingCallWithUUID:callUUID update:callUpdate completion:^(NSError * _Nullable error) {
             if(error == nil) {
                 [self.commandDelegate sendPluginResult:[CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:@"Incoming call successful"] callbackId:command.callbackId];
@@ -215,20 +246,25 @@ BOOL enableDTMF = NO;
 - (void)sendCall:(CDVInvokedUrlCommand*)command
 {
     BOOL hasId = ![[command.arguments objectAtIndex:1] isEqual:[NSNull null]];
+    BOOL hasVideo = ![[command.arguments objectAtIndex:2] isEqual:[NSNull null]];
     NSString* callName = [command.arguments objectAtIndex:0];
     NSString* callId = hasId?[command.arguments objectAtIndex:1]:callName;
+    BOOL isVideo = hasVideo?(BOOL)[command.arguments objectAtIndex:2]:defHasVideo;
     NSUUID *callUUID = [[NSUUID alloc] init];
 
     if (hasId) {
         [[NSUserDefaults standardUserDefaults] setObject:callName forKey:[command.arguments objectAtIndex:1]];
         [[NSUserDefaults standardUserDefaults] synchronize];
     }
+    if(hasVideo) {
+        [self updateProviderConfig:hasVideo];
+    }
 
     if (callName != nil && [callName length] > 0) {
         CXHandle *handle = [[CXHandle alloc] initWithType:CXHandleTypePhoneNumber value:callId];
         CXStartCallAction *startCallAction = [[CXStartCallAction alloc] initWithCallUUID:callUUID handle:handle];
         startCallAction.contactIdentifier = callName;
-        startCallAction.video = hasVideo;
+        startCallAction.video = isVideo;
         CXTransaction *transaction = [[CXTransaction alloc] initWithAction:startCallAction];
         [self.callController requestTransaction:transaction completion:^(NSError * _Nullable error) {
             if (error == nil) {
@@ -449,7 +485,7 @@ BOOL enableDTMF = NO;
     
     [self.provider reportCallWithUUID:action.callUUID updated:callUpdate];
     [action fulfill];
-    NSDictionary *callData = @{@"callName":action.contactIdentifier, @"callId": action.handle.value, @"isVideo": action.video?@YES:@NO, @"message": @"sendCall event called successfully"};
+    NSDictionary *callData = @{@"callName":action.contactIdentifier, @"callUUID": [action.callUUID UUIDString], @"callId": action.handle.value, @"isVideo": action.video?@YES:@NO, @"message": @"sendCall event called successfully"};
     for (id callbackId in callbackIds[@"sendCall"]) {
         CDVPluginResult* pluginResult = nil;
         pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:callData];
@@ -479,9 +515,11 @@ BOOL enableDTMF = NO;
     [action fulfill];
     for (id callbackId in callbackIds[@"answer"]) {
         CDVPluginResult* pluginResult = nil;
-        pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:@"answer event called successfully"];
+        pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:[action.callUUID UUIDString]];
         [pluginResult setKeepCallbackAsBool:YES];
-        [self.commandDelegate sendPluginResult:pluginResult callbackId:callbackId];
+        [self.commandDelegate sendPluginResult:pluginResult callbackId:callbackId];   
+        [self.webViewEngine evaluateJavaScript:@"window._CordovaCall_isCallAccepted = true" completionHandler:nil];
+
     }
     //[action fail];
 }
@@ -493,14 +531,14 @@ BOOL enableDTMF = NO;
         if(calls[0].hasConnected) {
             for (id callbackId in callbackIds[@"hangup"]) {
                 CDVPluginResult* pluginResult = nil;
-                pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:@"hangup event called successfully"];
+                pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:[action.callUUID UUIDString]];
                 [pluginResult setKeepCallbackAsBool:YES];
                 [self.commandDelegate sendPluginResult:pluginResult callbackId:callbackId];
             }
         } else {
             for (id callbackId in callbackIds[@"reject"]) {
                 CDVPluginResult* pluginResult = nil;
-                pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:@"reject event called successfully"];
+                pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:[action.callUUID UUIDString]];
                 [pluginResult setKeepCallbackAsBool:YES];
                 [self.commandDelegate sendPluginResult:pluginResult callbackId:callbackId];
             }
@@ -517,7 +555,7 @@ BOOL enableDTMF = NO;
     BOOL isMuted = action.muted;
     for (id callbackId in callbackIds[isMuted?@"mute":@"unmute"]) {
         CDVPluginResult* pluginResult = nil;
-        pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:isMuted?@"mute event called successfully":@"unmute event called successfully"];
+        pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:[action.callUUID UUIDString]];
         [pluginResult setKeepCallbackAsBool:YES];
         [self.commandDelegate sendPluginResult:pluginResult callbackId:callbackId];
     }
@@ -592,11 +630,19 @@ BOOL enableDTMF = NO;
         NSDictionary* json = [NSJSONSerialization JSONObjectWithData:[data dataUsingEncoding:NSUTF8StringEncoding] options:kNilOptions error:&error];
         
         NSObject* caller = [json objectForKey:@"Caller"];
-        NSArray* args = [NSArray arrayWithObjects:[caller valueForKey:@"Username"], [caller valueForKey:@"ConnectionId"], nil];
+        NSObject* callId = [caller valueForKey:@"ConnectionId"];
+        if([callId isEqual:[NSNull null]]) {
+            callId = [[[NSUUID alloc] init] UUIDString];
+        }
+
+        [results setObject:data forKey:@"UUID"];
+
+        NSArray* args = [NSArray arrayWithObjects:[caller valueForKey:@"Username"], callId, [json valueForKey:@"IsVideo"], nil];
         
         CDVInvokedUrlCommand* newCommand = [[CDVInvokedUrlCommand alloc] initWithArguments:args callbackId:@"" className:self.VoIPPushClassName methodName:self.VoIPPushMethodName];
         
         [self receiveCall:newCommand];
+        //TODO: retrieve call uuid
     }
     @catch (NSException *exception) {
        NSLog(@"[objC] error: %@", exception.reason);

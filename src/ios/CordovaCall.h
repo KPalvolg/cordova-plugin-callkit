@@ -16,6 +16,7 @@
 @property (nonatomic, strong) CXCallController *callController;
 
 - (void)updateProviderConfig;
+- (void)updateProviderConfig:(BOOL)hasVideo;
 - (void)setupAudioSession;
 
 - (void)setAppName:(CDVInvokedUrlCommand*)command;
